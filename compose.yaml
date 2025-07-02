@@ -1,0 +1,69 @@
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: carfactory-mssql
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${DB_PASSWORD}
+      - MSSQL_PID=Express
+    ports:
+      - "${DB_PORT}:${DB_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/${DB_PORT}' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - carfactory-network
+  
+  factories-db-init:
+    image: mcr.microsoft.com/mssql-tools
+    depends_on:
+      mssql:
+        condition: service_healthy
+    environment:
+      - DB_NAME=${DB_NAME_FACTORIES}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_USERNAME=${DB_USERNAME}
+    volumes:
+      - ./init-db.sh:/init-db.sh
+    entrypoint: ["/bin/bash", "-c", "chmod +x /init-db.sh && /init-db.sh"]
+    networks:
+      - carfactory-network
+
+  api-employees:
+    image: ${DOCKER_HUB}/${DOCKER_HUB_REPOSITORY}:${DOCKER_HUB_EMPLOYEES_TAG}
+    container_name: carfactory-employees-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${API_EMPLOYEES_ENVIRONMENT}
+      - ASPNETCORE_URLS=http://+:${API_EMPLOYEES_PORT}
+      - ConnectionStrings__SQLSERVER=Server=mssql,${DB_PORT};Database=${DB_NAME_EMPLOYEES};User Id=sa;Password=${DB_PASSWORD};Trust Server Certificate=true;
+    ports:
+      - "${API_EMPLOYEES_PORT}:${API_EMPLOYEES_PORT}"
+    depends_on:
+      mssql:
+        condition: service_healthy  
+    networks:
+      - carfactory-network
+
+  api-factories:
+    image: ${DOCKER_HUB}/${DOCKER_HUB_REPOSITORY}:${DOCKER_HUB_FACTORIES_TAG}
+    container_name: carfactory-factories-api
+    ports:
+      - "${API_FACTORIES_PORT}:${API_FACTORIES_PORT}"
+    environment:
+      - DB_HOST=mssql
+      - DB_PORT=${DB_PORT}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME_FACTORIES}
+    depends_on:
+      factories-db-init:
+        condition: service_completed_successfully
+    networks:
+      - carfactory-network
+
+networks:
+  carfactory-network:
+    driver: bridge
