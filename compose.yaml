@@ -59,9 +59,9 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
     environment:
-      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT}
-      KC_HOSTNAME_STRICT: "true"
-      KC_HOSTNAME_STRICT_BACKCHANNEL: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_HEALTH_ENABLED: "true"
@@ -72,13 +72,14 @@ services:
       timeout: 5s
       retries: 15
       start_period: 60s
-    command: ["start-dev", "--http-port", "${KEYCLOAK_PORT}", "--hostname", "${KEYCLOAK_HOST}", "--hostname-strict=true"]
+    command: ["start-dev", "--http-port", "${KEYCLOAK_PORT}"]
     ports:
       - "${KEYCLOAK_PORT}:${KEYCLOAK_PORT}"
-    extra_hosts:
-      - "keycloak:127.0.0.1"
     networks:
-      - carfactory-network
+      carfactory-network:
+        aliases:
+          - keycloak
+          - localhost
 
   keycloak-init:
     image: curlimages/curl:latest
