@@ -32,6 +32,68 @@ services:
     networks:
       - carfactory-network
 
+  rabbitmq:
+    image: rabbitmq:latest
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - ${RABBITMQ_PORT}:${RABBITMQ_PORT}
+      - ${RABBITMQ_PORT_MANAGEMENT}:${RABBITMQ_PORT_MANAGEMENT}
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    configs:
+      - source: rabbitmq-plugins
+        target: /etc/rabbitmq/enabled_plugins
+    volumes:
+      - rabbitmq-lib:/var/lib/rabbitmq/
+      - rabbitmq-log:/var/log/rabbitmq
+    networks:
+      - carfactory-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    environment:
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/${KEYCLOAK_PORT}'"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    command: ["start-dev", "--http-port", "${KEYCLOAK_PORT}"]
+    ports:
+      - "${KEYCLOAK_PORT}:${KEYCLOAK_PORT}"
+    networks:
+      carfactory-network:
+        aliases:
+          - keycloak
+          - localhost
+
+  keycloak-init:
+    image: curlimages/curl:latest
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./keycloak-init.sh:/init.sh:ro
+    command: ["/bin/sh", "/init.sh"]
+    networks:
+      - carfactory-network
+
   api-employees:
     image: ${DOCKER_HUB}/${DOCKER_HUB_REPOSITORY}:${DOCKER_HUB_EMPLOYEES_TAG}
     container_name: carfactory-employees-api
@@ -39,11 +101,28 @@ services:
       - ASPNETCORE_ENVIRONMENT=${API_EMPLOYEES_ENVIRONMENT}
       - ASPNETCORE_URLS=http://+:${API_EMPLOYEES_PORT}
       - ConnectionStrings__SQLSERVER=Server=mssql,${DB_PORT};Database=${DB_NAME_EMPLOYEES};User Id=sa;Password=${DB_PASSWORD};Trust Server Certificate=true;
+      - AppSettingsConfiguration__RabbitMq__HostName=${RABBITMQ_SERVICE_NAME}
+      - AppSettingsConfiguration__RabbitMq__Username=${RABBITMQ_USER}
+      - AppSettingsConfiguration__RabbitMq__Password=${RABBITMQ_PASSWORD}
+      - AppSettingsConfiguration__Contracts__FactoriesQueue=${FACTORY_QUEUE}
+      - Keycloak__Host=${KEYCLOAK_HOST}
+      - Keycloak__Port=${KEYCLOAK_PORT}
+      - Keycloak__Realm=${KEYCLOAK_REALM}
+      - Keycloak__Audience=${KEYCLOAK_AUDIENCE}
+      - Keycloak__ClientId=${KEYCLOAK_CLIENT_ID}
+      - Keycloak__ClientSecret=${KEYCLOAK_CLIENT_SECRET}
+      - Keycloak__GrantType=${KEYCLOAK_GRANT_TYPE}
     ports:
       - "${API_EMPLOYEES_PORT}:${API_EMPLOYEES_PORT}"
     depends_on:
       mssql:
-        condition: service_healthy  
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-init:
+        condition: service_completed_successfully
     networks:
       - carfactory-network
 
@@ -58,8 +137,24 @@ services:
       - DB_USERNAME=${DB_USERNAME}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME_FACTORIES}
+      - RABBITMQ_SERVICE_NAME=rabbitmq
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_FACTORIES_QUEUE=${FACTORY_QUEUE}
+      - KEYCLOAK_PORT=${KEYCLOAK_PORT}
+      - KEYCLOAK_HOST=${KEYCLOAK_HOST}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+      - KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE}
     depends_on:
       factories-db-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-init:
         condition: service_completed_successfully
     networks:
       - carfactory-network
@@ -67,3 +162,13 @@ services:
 networks:
   carfactory-network:
     driver: bridge
+
+configs:
+  rabbitmq-plugins:
+    content: "[rabbitmq_management]."  
+
+volumes:
+  rabbitmq-lib:
+    driver: local
+  rabbitmq-log:
+    driver: local
